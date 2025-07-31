@@ -1,4 +1,3 @@
-import e from "express";
 import Redis from "ioredis";
 require("dotenv").config();
 
