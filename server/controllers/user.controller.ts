@@ -1,14 +1,16 @@
 require("dotenv").config();
-import e, { Request, Response, NextFunction } from "express";
+import { Request, Response, NextFunction } from "express";
 import userModel, { IUser } from "../model/user.model";
 import ErrorHandler from "../utils/errorhandler";
 import catchAsyncErrors from "../middleware/catchAsyncErrors";
-import jwt from "jsonwebtoken";
+import jwt, { JwtPayload } from "jsonwebtoken";
 import path from "path";
 import ejs from "ejs";
 import sendMail from "../utils/sendMail";
-import { sendToken } from "../utils/jwt";
+import { refreshTokenOptions, sendToken, accessTokenOptions } from "../utils/jwt";
 import { redis } from "../utils/redis";
+import { userById } from "../services/user.service";
+import cloudinary from "cloudinary";
 
 //register user
 interface IRegistration {
@@ -153,6 +155,195 @@ export const logoutUser = catchAsyncErrors(async (req: Request, res: Response, n
             success: true,
             message: "Logged out successfully"
         });
+    } catch (error: any) {
+        return next(new ErrorHandler(error.message, 400));
+    }
+});
+
+// update access token
+export const updateAccessToken = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const refreshToken = req.cookies.refreshToken as string;
+        const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN as string) as JwtPayload;
+        const message = "Could not refresh access token";
+        if (!decoded) {
+            return next(new ErrorHandler(message, 401));
+        }
+        // Check if user exists in Redis
+        const session = await redis.get(decoded.id as string);
+        if (!session) {
+            return next(new ErrorHandler(message, 404));
+        }
+        const user = JSON.parse(session);
+
+        const accessToken = jwt.sign({ id: user._id }, process.env.ACCESS_TOKEN as string, { expiresIn: "15m" });
+        const refresh_Token = jwt.sign({ id: user._id }, process.env.REFRESH_TOKEN as string, { expiresIn: "7d" });
+
+        req.user = user;
+
+        res.cookie("accessToken", accessToken, accessTokenOptions);
+        res.cookie("refreshToken", refresh_Token, refreshTokenOptions);
+
+        res.status(200).json({
+            status: "success",
+            accessToken,
+        });
+    } catch (error: any) {
+        return next(new ErrorHandler(error.message, 400));
+    }
+});
+
+//get user info
+export const getUserInfo = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const userId = req.user?._id as string;
+
+        userById(userId, res);
+
+    } catch (error: any) {
+        return next(new ErrorHandler(error.message, 400));
+    }
+});
+
+interface ISocialAuth {
+    email: string;
+    name: string;
+    avatar: string;
+}
+
+// social auth
+export const socialAuth = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { email, name, avatar } = req.body as ISocialAuth;
+        const user = await userModel.findOne({ email });
+        if (!user) {
+            const newUser = await userModel.create({ email, name, avatar });
+            sendToken(newUser, 200, res);
+        } else {
+            sendToken(user, 200, res);
+        }
+    } catch (error: any) {
+        return next(new ErrorHandler(error.message, 400));
+    }
+})
+
+//update user info
+interface IUpdateUser {
+    name?: string;
+    email?: string;
+}
+export const updateUserInfo = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { name, email } = req.body as IUpdateUser;
+        const userId = req.user?._id;
+        const user = await userModel.findById(userId);
+
+        if (name && email) {
+            const isEmailExist = await userModel.findOne({ email });
+            if (isEmailExist) {
+                return next(new ErrorHandler("Email already exists", 400));
+            }
+            user.email = email;
+        }
+        if (name) {
+            user.name = name;
+        }
+        await user?.save();
+
+        // Update user in Redis
+        await redis.set(userId as string, JSON.stringify(user));
+        // Return updated user info
+        res.json({
+            success: true,
+            message: "User info updated successfully",
+            user
+        });
+    } catch (error: any) {
+        return next(new ErrorHandler(error.message, 400));
+    }
+});
+
+// update user password
+interface IUpdatePassword {
+    oldPassword: string;
+    newPassword: string;
+}
+export const updatePassword = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { oldPassword, newPassword } = req.body as IUpdatePassword;
+
+        if (!oldPassword || !newPassword) {
+            return next(new ErrorHandler("Please enter old and new password", 400));
+        }
+
+        const user = await userModel.findById(req.user?._id).select("+password");
+        if (user?.password === undefined) {
+            return next(new ErrorHandler("Invalid User", 404));
+        }
+        const isPasswordMatched = await user?.comparePassword(oldPassword);
+        if (!isPasswordMatched) {
+            return next(new ErrorHandler("Old password is incorrect", 400));
+        }
+
+        user.password = newPassword;
+        await user.save();
+        await redis.set(req.user?._id, JSON.stringify(user));
+
+        res.status(201).json({
+            success: true,
+            user,
+        });
+    } catch (error: any) {
+        return next(new ErrorHandler(error.message, 400));
+    }
+});
+
+// update user avatar
+interface IUpdateAvatar {
+    avatar: string;
+}
+export const updateAvatar = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { avatar } = req.body as IUpdateAvatar;
+        const userId = req.user?._id;
+        const user = await userModel.findById(userId);
+
+        if (avatar && user) {
+            //if user has avatar then go to if block
+            if (user?.avatar?.public_id) {
+                // Delete old avatar from cloudinary
+                await cloudinary.v2.uploader.destroy(user.avatar.public_id);
+
+                // Upload new avatar to cloudinary
+                const myCloud = await cloudinary.v2.uploader.upload(avatar, {
+                    folder: "avatars",
+                    width: 150
+                });
+                user.avatar = {
+                    public_id: myCloud.public_id,
+                    url: myCloud.secure_url
+                };
+
+            } else {
+                const myCloud = await cloudinary.v2.uploader.upload(avatar, {
+                    folder: "avatars",
+                    width: 150
+                });
+                user.avatar = {
+                    public_id: myCloud.public_id,
+                    url: myCloud.secure_url
+                };
+            }
+        }
+        await user.save();
+
+        await redis.set(userId, JSON.stringify(user));
+        res.status(200).json({
+            success: true,
+            message: "Avatar updated successfully",
+            user
+        });
+
     } catch (error: any) {
         return next(new ErrorHandler(error.message, 400));
     }
