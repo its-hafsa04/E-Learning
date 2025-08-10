@@ -1,7 +1,7 @@
 require("dotenv").config();
 import mongoose, { Document, Model, Schema } from "mongoose";
 import bcrypt from "bcryptjs";
-import e, { NextFunction } from "express";
+import { NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
 const emailRegexPattern: RegExp =

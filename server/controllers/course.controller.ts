@@ -1,10 +1,14 @@
-import { Request, Response, NextFunction } from "express";
+import e, { Request, Response, NextFunction } from "express";
 import CourseModel from "../model/course.model";
 import cloudinary from "cloudinary";
 import ErrorHandler from "../utils/errorhandler";
 import catchAsyncErrors from "../middleware/catchAsyncErrors";
 import { createCourse } from "../services/course.service";
 import { redis } from "../utils/redis";
+import mongoose from "mongoose";
+import ejs, { Template } from "ejs";
+import path from "path";
+import sendMail from "../utils/sendMail";
 
 // upload course
 export const uploadCourse = catchAsyncErrors(
@@ -141,6 +145,121 @@ export const getCourseContent = catchAsyncErrors(
                 content,
             });
 
+        } catch (error: any) {
+            return next(new ErrorHandler(error.message, 500));
+        }
+    }
+);
+
+//get questions for course
+interface IQuestionData {
+    question: string;
+    courseId: string;
+    contentId: string;
+}
+export const addQuestions = catchAsyncErrors(
+    async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const { question, courseId, contentId }: IQuestionData = req.body;
+
+            const course = await CourseModel.findById(courseId);
+            if (!mongoose.Types.ObjectId.isValid(contentId)) {
+                return next(new ErrorHandler("Content not found", 404));
+            }
+
+            const courseContent = course?.courseData?.find((item: any) => item._id.equals(contentId));
+            if (!courseContent) {
+                return next(new ErrorHandler("ContentId not found", 404));
+            }
+
+            //create new question object
+            const newQuestion: any = {
+                user: req.user,
+                question,
+                questionReplies: [],
+            };
+            // Add the question to the course content
+            courseContent.questions.push(newQuestion);
+            // Save the updated course
+            await course?.save();
+
+            res.status(200).json({
+                success: true,
+                course,
+            });
+        } catch (error: any) {
+            return next(new ErrorHandler(error.message, 500));
+        }
+    }
+);
+
+//add answer in course question
+interface IAnswerData {
+    answer: string;
+    courseId: string;
+    contentId: string;
+    questionId: string;
+}
+export const addAnswer = catchAsyncErrors(
+    async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            const { answer, courseId, contentId, questionId }: IAnswerData = req.body;
+
+            const course = await CourseModel.findById(courseId);
+            if (!mongoose.Types.ObjectId.isValid(contentId)) {
+                return next(new ErrorHandler("Content not found", 404));
+            }
+
+            const courseContent = course?.courseData?.find((item: any) => item._id.equals(contentId));
+            if (!courseContent) {
+                return next(new ErrorHandler("ContentId not found", 404));
+            }
+
+            const question = courseContent?.questions?.find((item: any) => item._id.equals(questionId));
+            if (!question) {
+                return next(new ErrorHandler("Question not found", 404));
+            }
+
+            // Create new answer object
+            const newAnswer: any = {
+                user: req.user,answer,
+            };
+            // Add the answer to the question
+            question.questionReplies.push(newAnswer);
+            // Save the updated course
+            await course?.save();
+
+            if(req.user?._id === question.user._id) {
+                //create notification
+
+            }else {
+                //create notification for question owner
+                const data ={
+                    user: question.user.name,
+                    title: courseContent.title,
+                }
+                const html = await ejs.renderFile(
+                    path.join(__dirname, "../mails/question-reply.ejs"),data);
+
+                // send email notification
+                try {
+                    await sendMail({
+                        email: question.user.email,
+                        subject: "Question replies",
+                        template: "question-reply.ejs",
+                        data,
+                    });
+                } catch (error: any) {
+                    return next(new ErrorHandler(error.message, 500));
+                    
+                }
+            }
+
+
+            res.status(200).json({
+                success: true,
+                course,
+            });
         } catch (error: any) {
             return next(new ErrorHandler(error.message, 500));
         }
