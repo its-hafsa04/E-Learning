@@ -10,6 +10,7 @@ import ejs, { Template } from "ejs";
 import path from "path";
 import sendMail from "../utils/sendMail";
 import { title } from "process";
+import NotificationModel from "../model/notification.model";
 
 // upload course
 export const uploadCourse = catchAsyncErrors(
@@ -188,6 +189,13 @@ export const addQuestions = catchAsyncErrors(
       };
       // Add the question to the course content
       courseContent.questions.push(newQuestion);
+
+      // Create a notification for the user
+      await NotificationModel.create({
+        user: req.user?._id,
+        title: "New Question Received",
+        message: `You have asked a question in the course: ${courseContent.title}`,
+      });
       // Save the updated course
       await course?.save();
 
@@ -244,6 +252,11 @@ export const addAnswer = catchAsyncErrors(
 
       if (req.user?._id === question.user._id) {
         //create notification
+        await NotificationModel.create({
+          user: question.user._id,
+          title: "Question Answered",
+          message: `Your question in the course: ${courseContent.title} has been answered.`,
+        });
       } else {
         //create notification for question owner
         const data = {
