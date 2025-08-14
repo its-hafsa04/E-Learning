@@ -172,7 +172,7 @@ export const updateAccessToken = catchAsyncErrors(async (req: Request, res: Resp
         // Check if user exists in Redis
         const session = await redis.get(decoded.id as string);
         if (!session) {
-            return next(new ErrorHandler(message, 404));
+            return next(new ErrorHandler("Please login to access this session.", 404));
         }
         const user = JSON.parse(session);
 
@@ -183,6 +183,8 @@ export const updateAccessToken = catchAsyncErrors(async (req: Request, res: Resp
 
         res.cookie("accessToken", accessToken, accessTokenOptions);
         res.cookie("refreshToken", refresh_Token, refreshTokenOptions);
+        // expire user session in Redis after 7days
+        await redis.set(user._id, JSON.stringify(user), "EX", 604800);
 
         res.status(200).json({
             status: "success",
@@ -371,12 +373,12 @@ export const updateUserRole = catchAsyncErrors(async (req: Request, res: Respons
 //delete user by admin
 export const deleteUser = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const {id} = req.params;
+        const { id } = req.params;
         const user = await userModel.findById(id);
         if (!user) {
             return next(new ErrorHandler("User not found", 404));
         }
-        await user.deleteOne({id});
+        await user.deleteOne({ id });
         // Remove user from Redis
         await redis.del(id);
 

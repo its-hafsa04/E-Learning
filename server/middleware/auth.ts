@@ -19,7 +19,7 @@ export const isAuthenticated = CatchAsyncError(async (req: Request, res: Respons
     // Check if user exists in Redis bcz we store user data in Redis
     const user = await redis.get(decoded.id);
     if (!user) {
-        return next(new ErrorHandler("User not found", 404));
+        return next(new ErrorHandler("Please login to access this resource.", 404));
     }
     req.user = JSON.parse(user);
     next();

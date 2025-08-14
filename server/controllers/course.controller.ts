@@ -118,7 +118,7 @@ export const getAllCourses = catchAsyncErrors(
           "-courseData.videoURL -courseData.suggestions -courseData.questions -courseData.links"
         );
 
-        await redis.set("allCourses", JSON.stringify(courses));
+        await redis.set("allCourses", JSON.stringify(courses), "EX", 604800);//expire in 7days
 
         res.status(200).json({
           success: true,
@@ -370,7 +370,7 @@ export const replyToReview = catchAsyncErrors(
         comment,
       };
 
-     if (!review.commentReplies) {
+      if (!review.commentReplies) {
         review.commentReplies = [];
       }
 
@@ -388,27 +388,27 @@ export const replyToReview = catchAsyncErrors(
 
 //get all course for admin only
 export const getAllCourse = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        getAllCoursesService(res);
-    } catch (error: any) {
-        return next(new ErrorHandler(error.message, 400));
-    }
+  try {
+    getAllCoursesService(res);
+  } catch (error: any) {
+    return next(new ErrorHandler(error.message, 400));
+  }
 });
 //delete course
 export const deleteCourse = catchAsyncErrors(async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        const {id} = req.params;
-        const course = await CourseModel.findById(id);
-        if (!course) {
-            return next(new ErrorHandler("Course not found", 404));
-        }
-        await course.deleteOne({id});
-
-        res.status(200).json({
-            success: true,
-            course,
-        });
-    } catch (error: any) {
-        return next(new ErrorHandler(error.message, 400));
+  try {
+    const { id } = req.params;
+    const course = await CourseModel.findById(id);
+    if (!course) {
+      return next(new ErrorHandler("Course not found", 404));
     }
+    await course.deleteOne({ id });
+
+    res.status(200).json({
+      success: true,
+      course,
+    });
+  } catch (error: any) {
+    return next(new ErrorHandler(error.message, 400));
+  }
 });
